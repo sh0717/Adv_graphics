@@ -1,0 +1,10 @@
+bunny- bunny interaction 같은 경우에 
+
+vertex - 상대 bunny의 tetrahedron 을 비교해서 
+
+만약에 vertex 가 tetrahedron 안에 있을 시에    p-> x_i 의  ray 와 tetrahedron 의 intersection q_c 와 그 부분에서의 normal n_c 를 구해 
+테트라 헤드론 밖으로 projection 하도록 코드는 썼는데 너무 
+
+계산 시간이 오래 걸려서, 상대 bunny 의 bounding sphere를 이용하는 방식으로 바꿔놨습니다. 
+
+(600번째 줄  코드 에 구현했습니다. )

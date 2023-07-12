@@ -1,0 +1,560 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>Boids Simulation</title>
+        <style>
+          body {
+            margin: 0;
+          }
+          .button{
+              background-color: #606060;
+              border: none;
+              color: white;
+              padding: 10px 32px;
+              font-size: 16px;
+              margin: 4px 2px;
+              cursor: pointer;
+          }
+          .slider{
+              -webkit-appearance: none;
+              width: 80px;
+              height: 6px;
+              border-radius: 5px;
+              background: #d3d3d3;
+              outline: none;
+              opacity: 0.7;
+              -webkit-transition: .2s;
+              transition: opacity .2s;
+          }
+          canvas {
+              display: block;
+          }
+	    </style>
+      <py-config type="json">
+        {
+          "packages":["numpy"]
+        }
+      </py-config>
+    </head>
+    <body>
+      <button class="py-button" py-click="run()">Run/Pause</button>
+	    <button class="py-button" py-click="reset_boids()">Restart</button>
+      <button class="py-button" py-click="predbool()">Pred무시</button>
+      <button class="py-button" py-click="goalbool()">Goal무시</button>
+      Cohesion#<input type = "range" min = "0" max = "1000" value = "0" id = "Slider01" class = "py-slider"> <span id = "SliderValue01">0.0</span>
+      Allignment# <input type = "range" min = "0" max = "1000" value = "0" id = "Slider02" class = "py-slider"> <span id = "SliderValue02">0.0</span>
+      Separation factor<input type = "range" min = "0" max = "1000" value = "0" id = "Slider03" class = "py-slider"> <span id = "SliderValue03">0.0</span>
+
+        <script src="https://unpkg.com/three@0.139.2/build/three.min.js"></script>
+        <script src="https://unpkg.com/three@0.139.2/examples/js/controls/OrbitControls.js"></script>
+        <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+        <link
+            rel="stylesheet"
+            href="https://pyscript.net/latest/pyscript.css"
+        /> 
+        <py-script>
+from pyodide.ffi import create_proxy, to_js
+from js import window
+from js import Math
+from js import THREE
+from js import Object
+from js import document
+import asyncio
+import js, pyodide
+
+scene = THREE.Scene.new()
+setcolor = "#bbbbbb"
+scene.background = THREE.Color.new(setcolor)
+
+renderer = THREE.WebGLRenderer.new()
+renderer.antialias = True
+renderer.setSize(window.innerWidth, window.innerHeight)
+document.body.appendChild( renderer.domElement )
+
+camera = THREE.PerspectiveCamera.new(75, window.innerWidth / window.innerHeight, 0.1, 1000.0 )
+camera.position.set(40,40,45)
+
+controls = THREE.OrbitControls.new(camera, renderer.domElement)
+controls.listenToKeyEvents(window)
+
+def window_onsize(event):
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize( window.innerWidth, window.innerHeight )
+
+window.onresize = window_onsize
+scene.pause = True
+
+# ================ Light setting ====================
+
+ambientLight = THREE.AmbientLight.new(0xaaaaaa)
+scene.add(ambientLight)
+
+dirLight = THREE.DirectionalLight.new(0xffffff)
+dirLight.position.set(1,1,1)
+dirLight.castSHadow = True
+scene.add(dirLight)
+
+lightBack = THREE.PointLight.new(0x0FFFFF, 1)
+lightBack.position.set(0, -3, -1)
+scene.add(lightBack)
+
+# ===========Creating Bound Box ============
+
+## You can modify the size of box
+boundRange = 25
+
+bound_material = THREE.MeshStandardMaterial.new()
+bound_material.color = THREE.Color.new(0x444488)
+bound_material.transparent = True
+bound_material.opacity = 0.1
+
+edge_material = THREE.LineBasicMaterial.new()
+edge_material.color = THREE.Color.new(0xfffffff)
+
+bound = THREE.Mesh.new(THREE.BoxGeometry.new(boundRange * 2, boundRange * 2, boundRange * 2), bound_material)
+edges = THREE.LineSegments.new(THREE.EdgesGeometry.new(THREE.BoxGeometry.new(boundRange * 2, boundRange * 2, boundRange * 2)), )
+
+scene.add(bound)
+scene.add(edges)
+
+#===================== CORE =====================
+
+import numpy as np 
+import math
+
+bgoal=False
+#Predetor 
+bpred=False
+PredPos = None
+PredV = None
+PredShape =None
+PredPower=0.007
+##goal position 
+GoalPos = None 
+GoalV =None
+## goalFactor is how much boids pursue goal position 만약에 goalFactor 가 무한대라면 엄청난 속도로 goal 에 붙을 거고
+#goalFactor가 0이라면 goal 이 있는줄도 모른채로 행동할 것  
+
+
+
+
+
+##boidsN number of particle , boidsV is velocity of particles boidsP is Position Of Particles
+boidsP = None
+boidsV = None
+boidsN = 0
+boidsShapes = []
+obstacles = []
+
+frameN =0
+
+#VisibleRange is used in rule 1 and rule 3 or checking predator 
+#boid particle can only 인지 if things are in visible range  
+VisibleRange =10
+
+
+
+###factor to decide 
+CohesionFactor=0.0146#used in rule_1 
+SeparationFactor=0.028#used in rule_2
+SeparationDist=5 # when repulsion start at rule_2 separation 을 하기 시작하는 거리 
+AlignmentFactor=0.0825 # used in rule_3
+BoundingFactor= 1
+GoalFactor=0.002 # used in goal sekking 
+######
+#about obstacle
+obstacleN=0
+
+obstacleP=None
+obstacleRadius =None
+obstacleType =None
+
+obstacleType_sphere=1
+obstacleType_box=2
+
+obstacle_avoid_factor =0.04
+
+#this function returns distance between particle i and particle j
+def FindDistance(i, j):
+  global  boidsP, boidsN
+  position1 = boidsP[i]
+  position2 = boidsP[j]
+  return np.linalg.norm(position1-position2)
+
+def create_obstacle():
+    global obstacleN, obstacleP ,obstacles , obstacleType, obstacleRadius
+    obstacleN = 2
+    obstacleP =np.zeros((2,3))
+    obstacleP[0]=np.array([20,20,20])
+    obstacleRadius=np.zeros(obstacleN)
+    
+    obstacleType = np.zeros(obstacleN)
+    obstacleType[0]=1
+    obstacleType[1]=1
+    for i in range(obstacleN):
+        obstacleRadius[i]=5  
+        geometry = THREE.SphereGeometry.new(5,32,16)
+        material = THREE.MeshPhongMaterial.new()
+        material.color = THREE.Color.new(0xffffff)
+        material.flatShading = True
+        obstacleShape = THREE.Mesh.new(geometry,material)
+        obstacles.append(obstacleShape)
+        scene.add(obstacleShape)
+        obstacles[i].position.set(obstacleP[i][0],obstacleP[i][1],obstacleP[i][2])
+    return
+
+
+   #create boids and also create predator information about predator is saved in PredV and PredPos
+#also create goal yes shape of goal is in boidsN 번째 원소 of array  only one in this program   
+def create_boids(num):
+    global boidsN, boidsP, boidsV, boidsShapes, GoalPos, PredPos, PredShape , PredV, boundRange ,GoalV
+    boidsN = num  
+    boidsP = -np.random.rand(num, 3) * (boundRange * 2) + boundRange 
+    boidsV = -np.random.rand(num, 3) * 10 + 1.5
+    GoalPos = -np.random.rand(3)*(boundRange*2)+boundRange
+
+    for i in range(num):
+        geometry = THREE.CylinderGeometry.new(0.0,0.75,2.25,4,1)
+        material = THREE.MeshPhongMaterial.new()
+        material.color = THREE.Color.new(0x993333)
+        material.flatShading = True
+        boidShape = THREE.Mesh.new(geometry, material)
+        boidsShapes.append(boidShape)
+        scene.add(boidShape)
+
+    geometry = THREE.CapsuleGeometry.new(1,1,4,8)
+    material = THREE.MeshPhongMaterial.new()
+    material.color = THREE.Color.new(0x009933)
+    material.flatShading = True
+    boidShape = THREE.Mesh.new(geometry, material)
+    boidsShapes.append(boidShape)
+    scene.add(boidShape)
+    boidsShapes[boidsN].position.set(GoalPos[0],GoalPos[1],GoalPos[2])
+
+    ###이 밑은 포식자 생성 색깔만 바꿔주자 크기도 크게 
+    PredPos=-np.random.rand(3) * (boundRange * 2) + boundRange 
+    PredV = -np.zeros(3)
+    geometry = THREE.CylinderGeometry.new(0.0,3,5,4,1)
+    material = THREE.MeshPhongMaterial.new()
+    material.color = THREE.Color.new(0x0000ff)
+    material.flatShading = True
+    PredShape = THREE.Mesh.new(geometry,material)
+    scene.add(PredShape)
+
+    GoalV=-np.random.rand(3) * 0.3
+    return
+
+
+
+def reset_boids():
+  global boidsP, boidsV, boidsN, boundRange
+  boidsP = -np.random.rand(boidsN, 3) * (boundRange * 2) + boundRange 
+  boidsV =  -np.random.rand(boidsN, 3) * 3 + 1.5
+
+
+def draw_boids(): ## Sync boidData and boidShape
+  global boidsV, boidsShapes,PredShape,PredPos ,PredV
+  
+  for i in range(boidsN):
+    boidsShapes[i].position.set(boidsP[i][0], boidsP[i][1], boidsP[i][2])
+    curv=boidsV[i]
+    normalized_v = curv/np.linalg.norm(curv)
+    
+    RotAxis = np.cross(np.array([0,1,0]),normalized_v)
+    RotAxis = RotAxis /np.linalg.norm(RotAxis)
+    dott = np.dot(np.array([0,1,0]),normalized_v)
+    RotAngle = math.acos(dott)
+    boidsShapes[i].setRotationFromAxisAngle(THREE.Vector3.new(RotAxis[0], RotAxis[1], RotAxis[2]),RotAngle)
+    ## 원래 y 축 바라보고 있다.
+    ## TODO Update rotation to align the boid heading direction with its velocity
+    ## Hint : boidsShapes[i].setRotationFromAxisAngle(THREE.Vector3.new(axis[0], axis[1], axis[2]), angle) (Find the axis and angle)
+  
+  PredShape.position.set(PredPos[0],PredPos[1],PredPos[2])
+  curv=PredV
+  normalized_v = curv/np.linalg.norm(curv)
+    
+  RotAxis = np.cross(np.array([0,1,0]),normalized_v)
+  RotAxis = RotAxis /np.linalg.norm(RotAxis)
+  dott = np.dot(np.array([0,1,0]),normalized_v)
+  RotAngle = math.acos(dott)
+  PredShape.setRotationFromAxisAngle(THREE.Vector3.new(RotAxis[0], RotAxis[1], RotAxis[2]),RotAngle)
+
+  return  
+
+#rule1 은 무리를 쫒아가려는 규칙 Cohesion   local  mass 를 찾고 거기로 이동하자 만약에 주변에 아무것도 없으면 0을 리턴하자 
+def rule1_cohesion():
+    global boidsP, boidsN , CohesionFactor ,VisibleRange
+    AnsVal = np.zeros((boidsN,3))
+    for j in range(boidsN):
+        cnt =0
+        totalMass=np.zeros(3)
+        for i in range(boidsN):
+            if (i!=j) and (FindDistance(i,j) < VisibleRange) :
+                cnt=cnt+1
+                totalMass=totalMass+boidsP[i]
+            else :
+                pass
+        if cnt<=0 :
+            continue
+        else :
+            PCj=(totalMass)/(cnt)#PCj 는 j 를 제외한 나머지중에서 보이는 것들의 무게 중심이다 
+            AnsVal[j]=(PCj-boidsP[j])*CohesionFactor
+    return AnsVal
+
+
+
+#rule2 는 너무 가까워지는걸 막으려는 특징 Separation
+def rule2_separation():
+  global boidsP, boidsN  ,SeparationFactor, SeparationDist
+  AnsVal = np.zeros((boidsN,3))
+  for i in range(boidsN):
+    for j in range(i+1,boidsN):
+      if (FindDistance(i,j)>SeparationDist):
+        continue
+      else:
+        AnsVal[j]=AnsVal[j]-(boidsP[i]-boidsP[j])*SeparationFactor
+        AnsVal[i]=AnsVal[i]-(boidsP[j]-boidsP[i])*SeparationFactor
+  return AnsVal
+#rule3 는 주위와 닮으려고 하는 특징 Alignment
+def rule3_align():
+    global boidsV, boidsN , AlignmentFactor, VisibleRange 
+    AnsVal = np.zeros((boidsN,3))
+    
+    for j in range(boidsN):
+        cnt =0
+        #cnt is number of boids that is in visible range
+        totalHead=np.zeros(3)
+        for i in range(boidsN):
+            if (i!=j) and (FindDistance(i,j) < VisibleRange) :
+                cnt=cnt+1
+                totalHead=totalHead+boidsV[i]
+            else :
+                pass
+        if cnt<=0 :
+            continue
+        else :
+            PVj=(totalHead)/(cnt)#PVj 는 j 를 제외한 것중에 보이는 것들의 평균 vel 이다 
+            AnsVal[j]=(PVj-boidsV[j])*AlignmentFactor
+    return AnsVal
+
+
+#goal following 
+def GoalSeek():
+    global GoalPos, boidsP, boidsN, GoalFactor
+    AnsVal = np.random.rand(boidsN,3)
+    for i in range(boidsN):
+        AnsVal[i]=(GoalPos-boidsP[i])*GoalFactor
+    return AnsVal
+
+
+#RunAway function is 포식자로부터 도망가는 function 
+def RunAway():
+    global boidsP, boidsN , PredPos , VisibleRange
+    AnsVal =np.zeros((boidsN,3))
+    for j in range(boidsN) : 
+        dist = np.linalg.norm(boidsP[j]-PredPos)
+        if dist > VisibleRange :
+        #predator 를 인식하지도 못함 
+            continue
+        else :
+        #포식자를 발견하면 포식자와의 거리와 상관없이 최대한 멀리 도망가는 방향으로 일정한 속도로 추가.
+            tmp = boidsP[j]-PredPos
+            tmp = tmp/dist
+            AnsVal[j] = tmp*30.0
+    return AnsVal
+
+
+def get_dist_box(x,y,z,r):
+  x_=abs(x)
+  y_=abs(y)
+  z_=abs(z)
+  max_num=max(max(x_,y_),z_)
+
+  
+  if max_num==x_ :
+    v_=np.array([1,0,0])
+  elif max_num==y_ :
+    v_ = np.array([0,1,0])
+  else :
+    v_ = np.array([0,0,1])
+
+
+def get_dist_box(x,y,z,r):
+  x_=abs(x)
+  y_=abs(y)
+  z_=abs(z)
+  max_num=max(max(x_,y_),z_)
+  if max_num==x_ :
+    v_=np.array([1,0,0])
+  elif max_num==y_ :
+    v_ = np.array([0,1,0])
+  else :
+    v_ = np.array([0,0,1])
+  vec=np.array([x,y,z]) 
+  total_dist=np.linalg.norm(vec)
+
+  vec= vec/total_dist#normalize
+  cos_theta= np.dot(vec,v_)
+  L=r/cos_theta
+  return total_dist-L
+    
+
+
+def Obstacle_avoid():
+    global obstacleN ,obstacleP, obstacleType , obstacleRadius, boidsN ,boidsV,boidsP, VisibleRange ,obstacle_avoid_factor
+    AnsVal = np.zeros((boidsN,3))
+    alpha=1
+    for j in range(boidsN):
+      for i in range(obstacleN):
+        dist = np.linalg.norm(boidsP[j]-obstacleP[i])-obstacleRadius[i]
+       
+        if obstacleType[i]==obstacleType_sphere:
+          dist = np.linalg.norm(boidsP[j]-obstacleP[i])-obstacleRadius[i]
+          pos= obstacleP[i]+obstacleRadius[i]*(boidsP[j]-obstacleP[i])/np.linalg.norm(boidsP[j]-obstacleP[i])
+          if dist > VisibleRange : 
+            continue
+          if dist < alpha : # too close 
+            boidsV[j]=boidsP[j]-pos
+          else :
+            AnsVal[j]+=(boidsP[j]-pos)*obstacle_avoid_factor
+        else:
+          tmp_vec=boidsP[j]-obstacleP[i]
+          dist= get_dist_box(tmp_vec[0],tmp_vec[1],tmp_vec[2],obstacleRadius[i])
+          pos = boidsP[j]-dist*tmp_vec/np.linarg.norm(tmp_vec)
+          if dist > VisibleRange : 
+            continue
+          if dist < alpha : # too close 
+            boidsV[j]=boidsP[j]-pos
+          else :
+            AnsVal[j]+=(boidsP[j]-pos)*obstacle_avoid_factor
+    return AnsVal
+
+
+
+
+
+
+#Bound function 은 바운드를 넘어갔으면 속도를 안쪽으로 바꿔서 
+def BoundPosition():
+  global boidsP, boidsV, boidsN ,boundRange ,BoundingFactor
+  for i in range(boidsN):
+    Position = boidsP[i]
+    for j in range(3):
+      if Position[j]>boundRange:
+        boidsV[i][j]=-BoundingFactor
+      elif Position[j]<-boundRange:
+        boidsV[i][j]=BoundingFactor
+
+
+#최대 속도 이하로 맞춘다.
+def saturate():
+  global boidsN, boidsV
+  maxVel=1
+  minVel=0.3
+  for i in range(boidsN):
+    if np.linalg.norm(boidsV[i])>maxVel:
+      boidsV[i]= boidsV[i]*maxVel/np.linalg.norm(boidsV[i])
+    elif np.linalg.norm(boidsV[i]) < minVel:
+      boidsV[i]=boidsV[i]*minVel/np.linalg.norm(boidsV[i])
+  return
+def update_boids():
+    global boidsP, boidsV, boidsN , bpred
+    #bpred means whether or not consider predetor 
+    
+    ## TODO Implement the velocity update rules
+    vel1 = rule1_cohesion()
+    vel2 = rule2_separation()
+    vel3 = rule3_align() 
+    if bgoal :
+      GoalVel = GoalSeek()
+    else :
+      GoalVel=np.zeros((boidsN,3))
+    if bpred:
+        vel4 =RunAway()
+    else :
+        vel4 =np.zeros((boidsN,3))
+    vel5 = Obstacle_avoid()
+    boidsV= boidsV+vel1+vel2+vel3+vel4+GoalVel+vel5
+    
+    BoundPosition()
+    #hardbound 
+    saturate()
+    boidsP += boidsV 
+
+def update_goal():
+  global frameN,GoalPos, boidsShapes , boidsN, GoalV
+  GoalPos+=GoalV
+
+  if frameN>100:
+    frameN=0
+    GoalV=-np.random.rand(3) * 0.3
+    GoalPos = -np.random.rand(3)*(boundRange*2)+boundRange
+  boidsShapes[boidsN].position.set(GoalPos[0],GoalPos[1],GoalPos[2])  
+
+def update_pred():
+  global boidsN, boidsP , PredPos , PredShape, PredV , PredPower
+  totalmass =np.zeros(3)
+  for i in range(boidsN):
+    totalmass=totalmass+boidsP[i]
+  totalmass= totalmass/boidsN
+  PredV=PredV+(totalmass-PredPos)*PredPower
+  maxV=2
+  if np.linalg.norm(PredV) > maxV:
+    PredV = PredV*maxV/np.linalg.norm(PredV)
+
+  PredPos=PredPos+PredV
+  return
+
+def run():
+  scene.pause = not scene.pause
+def predbool():
+  global bpred
+  bpred = not bpred
+def goalbool():
+  global bgoal
+  bgoal= not bgoal
+def animate():
+  if not scene.pause:
+    update_pred()
+    update_goal()
+    update_boids()
+    draw_boids()
+  renderer.render(scene, camera)
+
+## Example code for slider
+def slider01_function(event):
+    global CohesionFactor
+    value = int(Element("Slider01").value) * 0.00004
+    CohesionFactor=value
+    document.getElementById("SliderValue01").innerHTML = str(round(value, 4))
+document.getElementById("Slider01").oninput = slider01_function
+def slider02_function(event):
+    global AlignmentFactor
+    value = int(Element("Slider02").value) * 0.0005
+    AlignmentFactor=value
+    document.getElementById("SliderValue02").innerHTML = str(round(value, 4))
+document.getElementById("Slider02").oninput = slider02_function
+def slider03_function(event):
+    global SeparationFactor
+    value = int(Element("Slider03").value) * 0.00005
+    SeparationFactor=value
+    document.getElementById("SliderValue03").innerHTML = str(round(value, 4))
+document.getElementById("Slider03").oninput = slider03_function
+
+
+async def main():
+  global frameN
+  boid_num = 50
+  create_boids(boid_num)
+  create_obstacle()
+  draw_boids()
+  while True:
+    frameN=frameN+1.0         
+    animate()
+    await asyncio.sleep(0.0001)
+asyncio.ensure_future(main())
+        </py-script>
+        </body>
+</html>

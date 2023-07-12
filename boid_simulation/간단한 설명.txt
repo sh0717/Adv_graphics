@@ -1,0 +1,11 @@
+초록색 보석 : goal 
+파랑색 콘 : predator 
+빨간색 콘 : boid 
+하얀색 물체 : obstacle 
+
+hard bounding 으로 구현했습니다. 동영상 초반에는 
+goal 을 고려하다가 후반에는 무시하기를 시작했고 pred 무시버튼을 누르면 boid가 predator 를 고려하기 시작합니다.
+
+pred 무시 , goal 무시 모두 on/off 스위치입니다.
+
+

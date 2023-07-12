@@ -1,0 +1,8 @@
+offset: 7.3
+height 2.2 
+
+particle distance : 0.1m
+rest_p : 700
+STIFFNESS: 13
+
+중력상수 : 9.8

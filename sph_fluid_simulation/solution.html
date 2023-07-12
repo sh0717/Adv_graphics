@@ -1,0 +1,543 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="UTF-8" />
+        <title>SPH Simulation</title>
+        <style>
+          body {
+            margin: 0;
+          }
+          .button{
+              background-color: #606060;
+              border: none;
+              color: white;
+              padding: 10px 32px;
+              font-size: 16px;
+              margin: 4px 2px;
+              cursor: pointer;
+          }
+          .slider{
+              -webkit-appearance: none;
+              width: 80px;
+              height: 6px;
+              border-radius: 5px;
+              background: #d3d3d3;
+              outline: none;
+              opacity: 0.7;
+              -webkit-transition: .2s;
+              transition: opacity .2s;
+          }
+          canvas {
+              display: block;
+          }
+	    </style>
+      <py-config type="json">
+        {
+          "packages":["numpy"]
+        }
+      </py-config>
+    </head>
+    <body>
+      <button class="py-button" py-click="run()">Run/Pause</button>
+	    <button class="py-button" py-click="reset_boids()">Restart</button>
+      
+      height<input type = "range" min = "100" max = "350" value = "0" id = "Slider01" class = "py-slider"> <span id = "SliderValue01">0.0</span>
+      offset<input type = "range" min = "100" max = "490" value = "0" id = "Slider02" class = "py-slider"> <span id = "SliderValue02">0.0</span>  
+      stiffness<input type = "range" min = "0" max = "200" value = "0" id = "Slider03" class = "py-slider"> <span id = "SliderValue03">0.0</span>
+      rest<input type = "range" min = "0" max = "1000" value = "0" id = "Slider04" class = "py-slider"> <span id = "SliderValue04">0.0</span>
+        <script src="https://unpkg.com/three@0.139.2/build/three.min.js"></script>
+        <script src="https://unpkg.com/three@0.139.2/build/three.min.js"></script>
+        <script src="https://unpkg.com/three@0.139.2/examples/js/controls/OrbitControls.js"></script>
+        <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+        <link
+            rel="stylesheet"
+            href="https://pyscript.net/latest/pyscript.css"
+        /> 
+        <py-script>
+            #import copy
+from pyodide.ffi import create_proxy, to_js
+from js import window
+from js import Math
+from js import THREE
+from js import Object
+from js import document
+import random
+
+import asyncio
+import js, pyodide
+import os
+import numpy as np
+import math
+from time import time
+scene = THREE.Scene.new()
+setcolor = "#bbbbbb"
+scene.background = THREE.Color.new(setcolor)
+
+renderer = THREE.WebGLRenderer.new()
+renderer.antialias = False
+renderer.stencil=False
+renderer.depth = False
+
+renderer.setSize(window.innerWidth, window.innerHeight)
+document.body.appendChild( renderer.domElement )
+
+#cam = THREE.OrthographicCamera.new(window.innerWidth/(-2),window.innerWidth/2 , window.innerHeight/(-2), window.innerHeight/2,-1,10)
+#cam.position.set(3,2,5)
+#cam.lookAt(3,2,-3)
+
+camera = THREE.PerspectiveCamera.new(75, window.innerWidth / window.innerHeight, 0.1, 1000.0 )
+camera.position.set(3,2,5)
+camera.lookAt(3,2,-3)
+camera.up.set(0,1,0)
+controls = THREE.OrbitControls.new(camera, renderer.domElement)
+controls.listenToKeyEvents(window)
+
+def window_onsize(event):
+  camera.aspect = window.innerWidth / window.innerHeight
+  camera.updateProjectionMatrix()
+  renderer.setSize( window.innerWidth, window.innerHeight )
+
+window.onresize = window_onsize
+scene.pause = True
+
+# ================ Light setting ====================
+
+ambientLight = THREE.AmbientLight.new(0xaaaaaa)
+scene.add(ambientLight)
+
+
+
+# ===========Creating Bound Box ============
+
+## You can modify the size of box
+boundRange = 25
+
+bound_material = THREE.MeshStandardMaterial.new()
+bound_material.color = THREE.Color.new(0x444488)
+bound_material.transparent = True
+bound_material.opacity = 0.1
+
+edge_material = THREE.LineBasicMaterial.new()
+edge_material.color = THREE.Color.new(0xfffffff)
+
+bound = THREE.Mesh.new(THREE.BoxGeometry.new(boundRange * 2, boundRange * 2, boundRange * 2), bound_material)
+edges = THREE.LineSegments.new(THREE.EdgesGeometry.new(THREE.BoxGeometry.new(boundRange * 2, boundRange * 2, boundRange * 2)), )
+
+#scene.add(bound)
+
+#scene.add(edges)
+box_mat = THREE.MeshPhongMaterial.new(color = 0xffff00, flatShading = True)
+wall_mat = THREE.MeshPhongMaterial.new(color = 0x101099, flatShading = True)
+house_mat = THREE.MeshPhongMaterial.new(color = 0x115500, flatShading = True)
+box_geo_1 = THREE.BoxGeometry.new(6,4,1)
+#wall is box_2
+box_geo_2 = THREE.BoxGeometry.new(0.5,1,1)
+#house is box_geo_3
+box_geo_3 = THREE.BoxGeometry.new(0.5,0.5,1)            
+
+box_1 = THREE.Mesh.new(box_geo_1,box_mat)
+edge_1 = THREE.EdgesGeometry.new(box_geo_1)
+box_1.position.set(3,2,0)
+box_2 = THREE.Mesh.new(box_geo_2,wall_mat)
+edge_2 = THREE.EdgesGeometry.new(box_geo_2)
+box_2.position.set(2.25,0.5,0)
+box_3 = THREE.Mesh.new(box_geo_3,house_mat)
+edge_3 = THREE.EdgesGeometry.new(box_geo_3)
+box_3.position.set(5.75,0.25,-0)
+#scene.add(box_1)
+scene.add(box_2)
+scene.add(box_3)
+
+
+edges_1 = THREE.LineSegments.new(edge_1 , )
+edges_1.position.set(3,2,0)
+scene.add(edges_1)
+#===================== CORE =====================
+
+
+#h__ is kernel radius
+
+#####################
+BOXX=6
+BOXY=4
+
+
+class SpatialHashMap:
+
+  def __init__(self, power):
+    self.shift = 2
+    self.grid = {}
+  
+  def hash(self,x,y):
+    return x,y
+  
+  def insert(self, particle_idx):
+    x=ParticleArray[particle_idx].positions[0]
+    y=ParticleArray[particle_idx].positions[1]
+
+    key = self.hash(int(x*10),int(y*10))
+    if key not in self.grid:
+      self.grid[key] = []
+    self.grid[key].append(particle_idx)
+  
+  def getfriend(self, x,y):
+    
+    cur_x = x
+    cur_y =y
+  
+    idx_x = int(cur_x*10)
+    idx_y = int(cur_y*10)
+
+    max_x = idx_x+3
+    min_x = idx_x -3
+    max_y = idx_y + 3
+    min_y = idx_y -3
+    
+    if max_x > BOXX*10 :
+      max_x =BOXX*10 
+    if min_x < 0 :
+      min_x = 0
+    if max_y > 10*BOXY :
+      max_y = 10*BOXY
+    if min_y < 0 :
+      min_y = 0
+    return self.get_local(min_x,max_x,min_y,max_y)
+    #0.25 -> 2
+
+
+  def get_local(self, min_x ,max_x, min_y, max_y):
+    
+    min_hash_x , min_hash_y = self.hash(min_x,min_y)
+    max_hash_x ,max_hash_y = self.hash(max_x, max_y)
+    
+    local_point_array = []
+    
+    for hashX in range(min_hash_x, max_hash_x +1):
+      for hashY in range(min_hash_y, max_hash_y+1):
+        
+        if (hashX, hashY) in self.grid:
+          local_point_array.extend(self.grid[(hashX,hashY)])
+    
+    return local_point_array
+  def restart(self):
+    self.grid={}
+  def generate(self):
+    for i in range(ParticleNum):
+      self.insert(i)
+
+
+
+
+######################
+#about constants for particle 
+default_density  = 997
+rest_p = 700
+PAR_X =1
+PAR_Y =3
+
+NUM_PARTICLE =10 # this is 1m 당 몇개의 파티클을 넣을 거냐 ?
+PARTICLE_SPACE = 1.0/NUM_PARTICLE # 파티클 사이의 거리 1차원
+PARTICLE_VOL = PARTICLE_SPACE*PARTICLE_SPACE # 원자 하나당 차지하는 부피 
+PARTICLE_MASS = PARTICLE_VOL* default_density 
+
+#38.5
+#################
+TIMESTEP = 0.002
+h_r=0.2 # h_r is kernel range 
+hSQ=h_r*h_r
+GASCONST =13
+VISCOSITY =0.0
+poly6WCONST =4/math.pi/(pow(h_r ,8))
+poly6gradCONST = -24/math.pi/(pow(h_r,8))
+
+spikygradCONST = -30/math.pi/(pow(h_r , 5))
+
+laplaceCONST =  20/3/math.pi/(pow(h_r,5))
+dt=TIMESTEP
+DAMP = -0.5
+#offset 1.0~4.9
+offset_wall =2.0
+#height 1.0~3.5
+height_wall =1.0
+###정답  2.2 높이면 막을만하다 .
+
+box_2.geometry = THREE.BoxGeometry.new(0.5,height_wall,1)
+#box_2.position.set(offset_wall+0.25,height_wall/2,0)
+
+box_2.position.set(offset_wall+0.25,height_wall/2,0)
+
+
+#make const right
+def init_const():
+  global hSQ, poly6WCONST, SilkyCONST, poly6gradCONST, spikygradCONST
+  hSQ=h_r*h_r
+  poly6WCONST =4/math.pi/(pow(h_r ,8))
+  poly6gradCONST = -24/math.pi/(pow(h_r,8))
+  
+  spikygradCONST = -30/math.pi/(pow(h_r , 5))
+
+
+ParticleNuminX = (int)(PAR_X*NUM_PARTICLE)
+ParticleNuminY = (int)(PAR_Y * NUM_PARTICLE)
+ParticleNum = ParticleNuminX*ParticleNuminY
+ParticleArray = []
+
+
+Myhash = None
+
+
+def GetDist(i,j):
+  p1=ParticleArray[i]
+  p2=ParticleArray[j]
+  d = p1.positions-p2.positions
+  return math.sqrt(d[0]*d[0]+d[1]*d[1])
+
+
+################################for kernel
+#i 가 원점이고 W(|x-x'|,h) 를 return 
+
+###2D Wpoly6(r,h) 
+### 4(h_2 - r_2 )_3
+##  -----
+#   pi* h_8
+## W is 1/면적 단위
+
+def poly6W(r):
+  return poly6WCONST*(hSQ-r*r)*(hSQ-r*r)*(hSQ-r*r)
+
+#i 가 원점이고 그래디언트 W(|x-x'|,h) 를 return 은 뺴고 
+def poly6gradW(x,r):
+  return poly6gradCONST*(hSQ-r*r)*(hSQ-r*r)*x
+
+def spikygradW(x,r):
+  return spikygradCONST*(h_r-r)*(h_r-r)/r*x
+
+
+def Laplace(x,r):
+  return laplaceCONST*(h_r-r)
+
+
+#################################
+class Particle:
+  def __init__(self, a, b,i):
+    
+    addition = 7*(int)(b*10)
+    self.idx = i 
+    self.positions= np.array([float(a),float(b)])
+    self.velocities = np.zeros(2)
+    self.du= np.zeros(2)
+    self.radius=0.05
+    self.density = 0.0
+    self.pressure = 0.0
+    self.mass = PARTICLE_MASS
+    self.prepos = np.zeros(2)
+    self.geometry = THREE.SphereGeometry.new(self.radius,32,16 )
+    self.material = THREE.MeshPhongMaterial.new()
+    self.material.color = THREE.Color.new(0xafdfe4)
+    
+    self.material.flatShading = False
+    self.mesh = THREE.Mesh.new(self.geometry, self.material)
+    scene.add(self.mesh)
+    self.renderUpdate()
+    
+#update density and pressure
+  def updateDensity(self):
+
+    
+    self.density=0.0
+    self.friends = Myhash.getfriend(self.positions[0],self.positions[1])
+    for i in self.friends:
+      other_p = ParticleArray[i]
+      r= GetDist(self.idx, other_p.idx)
+      if(r <= h_r):
+        self.density+=(other_p.mass*poly6W(r))
+   
+    self.pressure = GASCONST*(self.density -rest_p)
+    if(self.pressure < 0.0) :
+      self.pressure =0.0
+
+
+  def renderUpdate(self):
+    self.mesh.position.set(self.positions[0],self.positions[1],0)
+  
+  def ComputeForce(self):
+    pressure_term = np.zeros(2)
+    gravity_term = np.array([0,-9.80665])
+    viscosity_term = np.zeros(2)
+    for i in self.friends:
+      
+      other_p = ParticleArray[i]
+      r= GetDist(self.idx, other_p.idx)
+      if(r <= 0.0):
+        continue
+      if(r <= h_r):
+        #pressure_term += (other_p.mass*(self.pressure+other_p.pressure)/2/(other_p.density)*poly6gradW(self.positions-other_p.positions,r))
+        pressure_term+= (other_p.mass*(other_p.pressure+self.pressure)/(2*other_p.density)*spikygradW(self.positions-other_p.positions,r))
+
+        viscosity_term += VISCOSITY*(other_p.mass*(other_p.velocities - self.velocities)/other_p.density* Laplace(self.positions-other_p.positions,r))
+    pressure_term /= (-self.density)
+    viscosity_term/=self.density
+    #gravity_term = np.zeros(2)
+   
+    self.du = pressure_term + gravity_term+viscosity_term
+    
+  def update(self):
+    
+    self.velocities +=(TIMESTEP*self.du)
+    self.prepos[0]=self.positions[0]
+    self.prepos[1]=self.positions[1]
+    self.positions +=(TIMESTEP*self.velocities)
+    self.bound()
+    self.renderUpdate()
+
+  def bound(self):
+    p=self.positions
+    x = p[0]
+    y = p[1]
+    if(x < 0) :
+      x = 0.001*6*0
+      self.velocities[0]*=DAMP
+      
+    elif(x > BOXX) :
+      x = BOXX
+      self.velocities[0]*=DAMP
+      
+    if(y < 0):
+      y =0.001*6*0
+      self.velocities[1] *= DAMP
+      
+    elif(y > 4):
+      y =4.0
+      self.velocities[1] *=DAMP
+    
+    if( x > offset_wall and  x < offset_wall+0.5 and  y <= height_wall   and y >= 0 and True):
+      if (self.prepos[0] <= offset_wall ):
+        x=offset_wall-0.001
+        self.velocities[0]=self.velocities[0]*DAMP
+        
+      elif(self.prepos[0] >= offset_wall+0.5):
+        x =offset_wall+0.5+0.001
+        self.velocities[0]*=DAMP
+        
+      else:
+        #print("%f , %f" %(self.prepos[0],self.prepos[1]))
+        y = height_wall
+        self.velocities[1]*=DAMP
+        self.velocities[0]*=0.8
+        
+    if(x > 5.5 and y < 0.5 and True ):
+      if(self.prepos[0])<=5.5:
+        x=5.5
+        self.velocities[0]*=DAMP
+        mat = THREE.MeshBasicMaterial.new()
+        mat.color = THREE.Color.new(0xff0000)
+        box_3.material=mat
+        
+      else :
+        y = 0.5
+        self.velocities[1]*=DAMP
+        mat = THREE.MeshBasicMaterial.new()
+        mat.color = THREE.Color.new(0xff0000)
+        box_3.material=mat
+    self.positions[0]=x
+    self.positions[1]=y          
+
+    
+
+    
+
+
+def SetUpParticle():
+    global ParticleArray, Myhash
+    Myhash = SpatialHashMap(3)
+    for i in range(ParticleNuminX):
+      for j in range(ParticleNuminY):
+        
+        p=Particle((i+0.5)*PARTICLE_SPACE,(j+0.5)*PARTICLE_SPACE,i*ParticleNuminY+j)
+        ParticleArray.append(p)
+    Myhash.generate()
+
+
+
+def run():
+  scene.pause = not scene.pause
+
+
+def animate(*args):
+  start =time()
+  window.requestAnimationFrame( create_proxy(animate) )   
+  controls.update()
+  if not scene.pause:
+    for i in range(ParticleNum):
+      p=ParticleArray[i]
+      p.updateDensity()
+    for i in range(ParticleNum):
+      p=ParticleArray[i]
+      p.ComputeForce()
+    for i in range(ParticleNum):
+      p=ParticleArray[i]
+      p.update()
+
+    Myhash.restart()
+    Myhash.generate()
+  renderer.render(scene, camera)
+  end =time()
+  duration = end-start
+  #print(duration)
+
+## Example code for slider
+def slider01_function(event):
+  value = int(Element("Slider01").value) * 0.01
+  document.getElementById("SliderValue01").innerHTML = str(round(value, 3))
+  global height_wall
+  height_wall = value
+  box_2.geometry = THREE.BoxGeometry.new(0.5,height_wall,1)
+  box_2.position.set(offset_wall+0.25,height_wall/2,0)
+  
+document.getElementById("Slider01").oninput = slider01_function
+
+def slider02_function(event):
+  value = int(Element("Slider02").value) * 0.01
+  document.getElementById("SliderValue02").innerHTML = str(round(value, 3))
+  global offset_wall
+  offset_wall = value
+  #box_2.geometry = THREE.BoxGeometry.new(0.5,height_wall,1)
+  box_2.position.set(offset_wall+0.25,height_wall/2,0)
+  
+document.getElementById("Slider02").oninput = slider02_function
+
+def slider03_function(event):
+  value = int(Element("Slider03").value) * 0.1
+  document.getElementById("SliderValue03").innerHTML = str(round(value, 1))
+  global GASCONST
+  GASCONST = value
+  
+  
+document.getElementById("Slider03").oninput = slider03_function
+def slider04_function(event):
+  value = int(Element("Slider04").value) 
+  document.getElementById("SliderValue04").innerHTML = str(round(value, 0))
+  global rest_p
+  rest_p = value
+  
+  
+document.getElementById("Slider04").oninput = slider04_function
+
+
+SetUpParticle()
+init_const()
+
+animate()
+
+#async def main():  
+  #SetUpParticle()
+  #init_const()
+  #while True:         
+    #animate()
+    #await asyncio.sleep(0.000000001)  
+
+ 
+#asyncio.ensure_future(main())
+        </py-script>
+        </body>
+</html>
